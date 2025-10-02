@@ -8,6 +8,7 @@ export const webSocketSendMessage = {
     code_to_xml_msg: "EXPR_STMT",
     new_rule_msg: "NEW_RULE",
     new_tag_msg: "NEW_TAG",
+    send_llm_snippet_msg: "LLM_SNIPPET",
 
     open_file_msg: "OPEN_FILE",
 

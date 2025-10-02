@@ -30,6 +30,16 @@ class Utilities {
                         tagInfo: data
                     };
                     break;
+
+                case webSocketSendMessage.send_llm_snippet_msg:
+                    console.log("In command");
+                    console.log(data);
+                    messageJson.data={
+                        code:data.suggestedSnippet,
+                        explanation:data.snippetExplanation
+                    }
+                    break;
+
                 case webSocketSendMessage.send_info_for_edit_fix:
                     messageJson.data={
                         filePathOfSuggestedFix:data.data.fileToChange,
@@ -40,13 +50,17 @@ class Utilities {
                 
                 
                 case webSocketSendMessage.llm_modified_file_content:
+                    if (!data.llmModifiedFileContent) {
+                        console.warn('No LLM modified file content to send.');
+                        return;
+                    }
 
                     messageJson.data = {
                         filePath: data.llmModifiedFileContent.data.filePath,
                         explanation: data.llmModifiedFileContent.data.explanation,
                         fileToChange: data.llmModifiedFileContent.data.fileToChange,
-                        modifiedFileContent:data.llmModifiedFileContent.data.modifiedFileContent,
-                        violatedCode:data.violatedCode
+                        modifiedFileContent: data.llmModifiedFileContent.data.modifiedFileContent,
+                        originalFileContent: data.originalFileContent || data.llmModifiedFileContent.data.originalFileContent || '',
                     }
 
                     break;

@@ -4,7 +4,7 @@
 
 import {Component} from "react";
 import {connect} from "react-redux";
-import { setFileContentToSendToGPT } from "./sharedStates";
+
 
 import {
     receiveExpressionStatementXML,
@@ -52,12 +52,6 @@ class WebSocketManager extends Component {
             
             switch (message.command) {
 
-                case webSocketReceiveMessage.receive_content_for_edit_fix:
-                    console.log("EDIT FIX CONTENT: ");
-                    console.log(message.data);
-                    setFileContentToSendToGPT(message.data);
-                    this.props.onReceiveEditFixContent(); // Notify parent component
-                    break;
 
                 case webSocketReceiveMessage.enter_chat_msg:
                     this.props.onLoadingGif(true);
@@ -178,17 +172,25 @@ class WebSocketManager extends Component {
 
                 case webSocketReceiveMessage.file_change_in_ide_msg:
                     // data: "filePath"
+            
                     let focusedFilePath = message.data;
-                    if (!this.props.ignoreFileChange) {
-                        this.props.onFilePathChange(focusedFilePath);
-                        window.location.hash = `#/${hashConst.rulesForFile}/` + focusedFilePath.replace(/\//g, "%2F");
-                    } else {
-                        counter--;
-                        if (counter === 0) {
-                            this.props.onFalsifyIgnoreFile();
-                            counter = 3;
-                        }
+                    console.log("File name: ");
+                    console.log(focusedFilePath);
+                    focusedFilePath = String(focusedFilePath);
+                    
+                    if(!focusedFilePath.includes("edit_fix_window")){
+                        if (!this.props.ignoreFileChange) {
+                            this.props.onFilePathChange(focusedFilePath);
+                            window.location.hash = `#/${hashConst.rulesForFile}/` + focusedFilePath.replace(/\//g, "%2F");
+                        } else {
+                            counter--;
+                            if (counter === 0) {
+                                this.props.onFalsifyIgnoreFile();
+                                counter = 3;
+                            }
+                        }                        
                     }
+
                     break;
 
                 /* Mining Rules */

@@ -8,7 +8,7 @@ import { connect } from "react-redux";
 import "../index.css";
 import "../App.css";
 import {
-    Tab, Tabs, Badge, FormGroup, ControlLabel, Label, Collapse
+    Tab, Tabs, Badge, FormGroup, ControlLabel, Label, Collapse, Button
 } from "react-bootstrap";
 import { FaCaretDown, FaCaretUp } from "react-icons/fa";
 import { MdEdit } from "react-icons/md";
@@ -27,7 +27,7 @@ import '../../src/prism-vs.css'; // Choose any theme you like
 
 // Import the language syntax for Java
 import 'prismjs/components/prism-java';
-import { getFileContentToSendToGPT } from "../core/sharedStates";
+
 import WebSocketManager from "../core/webSocketManager";
 
 class RulePanel extends Component {
@@ -394,6 +394,7 @@ class RulePanel extends Component {
             return list.map((d, i) => {
                 return (
                     <SnippetView
+                        xmlFiles={this.props.xmlFiles}
                         key={i}
                         d={d}
                         snippetGroup={group}
@@ -476,6 +477,7 @@ class RulePanel extends Component {
 // map state to props
 function mapStateToProps(state) {
     return {
+        xmlFiles: state.xmlFiles,
         rules: state.ruleTable,
         tagTable: state.tagTable,
         codeChanged: state.currentHash[0] === hashConst.codeChanged,
@@ -510,9 +512,10 @@ class SnippetView extends Component {
             snippetExplanation: null,
             suggestionFileName: null,
             llmModifiedFileContent: null,
-            fileContentToSendToGPT: getFileContentToSendToGPT(),
+            fixButtonClicked: false,
+            originalFileContent: ''
         };
-        this.onReceiveEditFixContent = this.onReceiveEditFixContent.bind(this);
+        //this.onReceiveEditFixContent = this.onReceiveEditFixContent.bind(this);
     }
 
     saveConversationToSessionStorage = (key, conversationHistory) => {
@@ -528,17 +531,6 @@ class SnippetView extends Component {
         sessionStorage.removeItem(key);
     }
 
-    handleEditFix = async (key) => {
-        console.log("Came to handle edit");
-        const fileContentToSendToGPT = getFileContentToSendToGPT();
-        await editFix(
-            key,
-            this.getConversationFromSessionStorage,
-            this.saveConversationToSessionStorage,
-            this.setState.bind(this),
-            fileContentToSendToGPT
-        );
-    };
 
     handleSuggestion = async (
         rule,
@@ -550,6 +542,25 @@ class SnippetView extends Component {
     ) => {
         const parsedSnippet = Utilities.removeSrcmlAnnotations(snippet);
         const parsedExample = Utilities.removeSrcmlAnnotations(example);
+
+        const normalizePath = (filePath) => filePath.replace(/\\/g, '/');
+        const targetPath = normalizePath(violationFilePath);
+        let violationFileContent = '';
+        if (this.props.xmlFiles && this.props.xmlFiles.length > 0) {
+            const matchingFile = this.props.xmlFiles.find((file) => normalizePath(file.filePath) === targetPath);
+            if (matchingFile) {
+                violationFileContent = Utilities.removeSrcmlAnnotations(matchingFile.xml);
+            } else {
+                const targetFileName = targetPath.split('/').pop();
+                const fallbackMatch = this.props.xmlFiles.find((file) => normalizePath(file.filePath).endsWith(`/${targetFileName}`));
+                if (fallbackMatch) {
+                    violationFileContent = Utilities.removeSrcmlAnnotations(fallbackMatch.xml);
+                }
+            }
+        }
+
+        this.setState({ fixButtonClicked: true, originalFileContent: violationFileContent });
+
         // prevent multiple calls to suggestFix
         if (!this.state.suggestionCreated) {
             const conversationHistory = await suggestFix(
@@ -558,6 +569,7 @@ class SnippetView extends Component {
                 parsedSnippet,
                 exampleFilePath,
                 violationFilePath,
+                violationFileContent,
                 this.setState.bind(this),
             );
 
@@ -568,50 +580,118 @@ class SnippetView extends Component {
         }
     };
 
-    generateDiff = (originalCode, modifiedCode) => {
-        const normalizeLines = (code) =>
-            code.split('\n')
-                .map(line =>
-                    line.trim()  // Trim leading and trailing whitespace
-                        .replace(/\s+/g, ' ')  // Normalize multiple spaces
-                        .replace(/\s*<\s*/g, '<')  // Normalize spaces around <
-                        .replace(/\s*>\s*/g, '>')  // Normalize spaces around >
-                        .replace(/\s*=\s*/g, '=')  // Normalize spaces around =
-                        .replace(/\s*\(\s*/g, '(')  // Normalize spaces around (
-                        .replace(/\s*\)\s*/g, ')')  // Normalize spaces around )
-                        .replace(/\s*\{\s*/g, '{')  // Normalize spaces around {
-                        .replace(/\s*\}\s*/g, '}')  // Normalize spaces around }
-                )
-                .filter(line => line !== '');
 
-        const originalLines = normalizeLines(originalCode);
-        const modifiedLines = normalizeLines(modifiedCode);
+
+    handleEditFix = async (suggestionFileName, uniqueKey) => {
+
+        const convHistory = this.getConversationFromSessionStorage(uniqueKey);
+        //console.log("convHistory");
+        //console.log(convHistory);
+
+
+        const xmlFiles = this.props.xmlFiles;
+
+
+
+        // Function to extract the file name from the filePath
+        const extractFileName = (filePath) => {
+            const parts = filePath.split('/');
+            return parts[parts.length - 1];
+        };
+
+        // Iterate over xmlFiles to find the matching file
+        const matchingFile = xmlFiles.find(file => extractFileName(file.filePath) === suggestionFileName);
+        let codeOfSuggestionFile = '';
+
+        if (matchingFile) {
+            console.log("Found matching file:");
+            //console.log(matchingFile.xml);
+            codeOfSuggestionFile = Utilities.removeSrcmlAnnotations(matchingFile.xml);
+            // Do something with the matchingFile.xml here
+
+            //console.log("before getting into normalizeFunction");
+            //console.log(codeOfSuggestionFile);
+
+            //console.log("after normalizeFunction");
+            //console.log(codeOfSuggestionFile);
+        } else {
+            console.log("No matching file found");
+        }
+        //console.log("Matching file content");
+        //console.log(codeOfSuggestionFile);
+        const originalCode = Utilities.removeSrcmlAnnotations(this.state.d.surroundingNodes);
+        const modifiedCode = convHistory.data.modifiedFileContent;
+        const diff = this.generateDiff(originalCode, modifiedCode);
+        //console.log("THE DIFF");
+        //console.log(diff);
+
+
+
+        // Define the processDiff function inside handleEditFix
+        const processDiff = (diffArray) => {
+            return diffArray.map(diff => {
+                let message = '';
+                if (diff.type === 'added') {
+                    message = 'This line was added by you as part of solution: ';
+                } else if (diff.type === 'removed') {
+                    message = 'This line was removed by you as part of solution: ';
+                }
+                return message + diff.text;
+            });
+        };
+
+        const processedDiff = processDiff(diff);
+
+        // Join all the elements into a single string with each element on a separate line
+        const resultText = processedDiff.join('\n');
+
+        console.log(resultText);
+
+        const response = await editFix(codeOfSuggestionFile, resultText, this.setState.bind(this));
+    }
+
+    generateDiff = (originalCode, modifiedCode) => {
+        const normalizeForComparison = (line) => line.replace(/^\s+/, '').replace(/\s+$/, '');
+        const originalLines = originalCode.split('\n');
+        const modifiedLines = modifiedCode.split('\n');
+
+        const originalCounts = new Map();
+        originalLines.forEach((line) => {
+            const key = normalizeForComparison(line);
+            originalCounts.set(key, (originalCounts.get(key) || 0) + 1);
+        });
+
+        const remainingOriginalCounts = new Map(originalCounts);
         const diff = [];
 
-        // Identify added lines
-        modifiedLines.forEach(modifiedLine => {
-            if (!originalLines.includes(modifiedLine)) {
-                diff.push({ type: 'added', text: modifiedLine });
+        modifiedLines.forEach((line) => {
+            const key = normalizeForComparison(line);
+            const remaining = remainingOriginalCounts.get(key) || 0;
+            if (remaining > 0) {
+                remainingOriginalCounts.set(key, remaining - 1);
+            } else {
+                diff.push({ type: 'added', text: line });
             }
         });
 
-        // Identify removed lines
-        originalLines.forEach(originalLine => {
-            if (!modifiedLines.includes(originalLine)) {
-                diff.push({ type: 'removed', text: originalLine });
+        originalLines.forEach((line) => {
+            const key = normalizeForComparison(line);
+            const remaining = remainingOriginalCounts.get(key) || 0;
+            if (remaining > 0) {
+                diff.push({ type: 'removed', text: line });
+                remainingOriginalCounts.set(key, remaining - 1);
             }
         });
 
-        // Update the state with the generated diff
-        //this.setState({ diff });
+        console.log('DIFF');
+        console.log(diff);
 
         return diff;
     };
 
-
     renderDiff = () => {
-        const originalCode = Utilities.removeSrcmlAnnotations(this.state.d.surroundingNodes);
-        const modifiedCode = this.state.suggestedSnippet;
+        const originalCode = this.state.originalFileContent;
+        const modifiedCode = this.state.suggestedSnippet || '';
         const diff = this.generateDiff(originalCode, modifiedCode);
 
         const highlightCode = (code) => {
@@ -637,23 +717,6 @@ class SnippetView extends Component {
         );
     };
 
-    /*componentDidUpdate(prevProps, prevState) {
-        console.log("in component did update");
-        const fileContentToSendToGPT = getFileContentToSendToGPT();
-        if (fileContentToSendToGPT && fileContentToSendToGPT !== prevState.fileContentToSendToGPT) {
-            console.log("In component updated");
-            this.setState({ fileContentToSendToGPT }, () => {
-                this.handleEditFix(this.state.d.filePath);
-            });
-        }
-    }*/
-
-    onReceiveEditFixContent = () => {
-        // Force an update to check for changes in the shared state
-        console.log("in onReceive");
-        this.setState({ fileContentToSendToGPT: getFileContentToSendToGPT() });
-        this.handleEditFix(this.state.d.filePath);
-    };
 
     render() {
         const uniqueKey = this.state.d.filePath;
@@ -681,9 +744,9 @@ class SnippetView extends Component {
         };
 
         const buttonParent = {
-            position: "absolute",
-            top: "0",
-            right: "0",
+            position: "relative",
+            //top: "0",
+            //right: "0",
             zIndex: "1",
         };
 
@@ -691,20 +754,35 @@ class SnippetView extends Component {
             display: "flex",
             flexDirection: "column",
             width: "100%",
+            padding: "10px",
+            border: "1px solid grey",
+            marginTop: "2px",
+            borderRadius: "5px"
         };
 
         const paneStyle = {
             padding: "10px",
-            borderBottom: "1px solid #ddd",
+            borderBottom: "1px solid grey",
+            marginTop: "2px",
+            borderRadius: "0px"
         };
 
         const highlightCode = (code) => {
             return Prism.highlight(code, Prism.languages.java, 'java');
         };
 
+        const wrapperStyle = {
+            display: 'flex',
+            alignItems: 'center',
+            width: '100%',
+        };
+
+        const contentStyle = {
+            flex: 1,
+        };
+
         return (
             <section>
-                {/*<WebSocketManager onReceiveEditFixContent={this.onReceiveEditFixContent}/> */}
                 <div
                     data-file-path={this.state.d.filePath}
                     className="snippetDiv"
@@ -712,6 +790,7 @@ class SnippetView extends Component {
                 >
                     <div
                         className="link"
+                        style={paneStyle}
                         onClick={() => {
                             this.props.onIgnoreFile(true);
                             Utilities.sendToServer(
@@ -721,104 +800,158 @@ class SnippetView extends Component {
                             );
                         }}
                     >
-                        <pre
-                            className="content"
-                            dangerouslySetInnerHTML={{ __html: highlightCode(Utilities.removeSrcmlAnnotations(this.state.d.snippet)) }}
-                        />
+                        <h2 style={titleStyle}>Violated Code Snippet </h2>
+                        <div style={wrapperStyle}>
+                            <pre
+                                className="content"
+                                style={contentStyle}
+                                dangerouslySetInnerHTML={{ __html: highlightCode(Utilities.removeSrcmlAnnotations(this.state.d.snippet)) }}
+                            />
 
-                        <span style={buttonParent}>
-                            {/* render the following IF this is a violation of a rule and there is no fix yet */}
-                            {this.state.snippetGroup === "violated" &&
-                                // Use the apiKey variable in the conditional rendering check
-                                apiKey !== null &&
-                                apiKey !== "" &&
-                                !this.state.suggestedSnippet && (
-                                    <button
-                                        onClick={() =>
-                                            this.handleSuggestion(
-                                                this.state.description,
-                                                this.state.exampleSnippet,
-                                                this.state.d.surroundingNodes,
-                                                this.state.exampleFilePath,
-                                                this.state.d.filePath,
-                                                uniqueKey
-                                            )
-                                        }
-                                        style={buttonStyle}
-                                    >
-                                        Fix ✨
-                                    </button>
-                                )}
-                        </span>
+
+
+                            <span style={buttonParent}>
+                                {/* render the following IF this is a violation of a rule and there is no fix yet */}
+                                {this.state.snippetGroup === "violated" &&
+                                    apiKey !== null &&
+                                    apiKey !== "" &&
+                                    !this.state.suggestedSnippet && (
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation(); // Prevent the div's onClick from firing
+                                                this.handleSuggestion(
+                                                    this.state.description,
+                                                    this.state.exampleSnippet,
+                                                    this.state.d.surroundingNodes,
+                                                    this.state.exampleFilePath,
+                                                    this.state.d.filePath,
+                                                    uniqueKey
+                                                );
+                                            }}
+                                            style={{ ...buttonStyle, backgroundColor: '#3B71CA', color: 'white' }}
+                                        >
+                                            Fix ✨
+                                        </button>
+                                    )}
+                            </span>
+                        </div>
                     </div>
 
-                    {this.state.suggestionCreated && !this.state.suggestedSnippet && (
+                    {!this.state.suggestionCreated && this.state.fixButtonClicked && (
                         <h2 style={{ color: 'black', fontSize: '1.25em', fontWeight: 'bold', textAlign: 'center' }}>Loading Fix...</h2>
                     )}
 
-                    {this.state.suggestedSnippet && (
+                    {this.state.suggestionCreated && this.state.suggestedSnippet && (
                         <div style={containerStyle}>
-                            <div style={paneStyle}>
-                                {/*                                <h2 style={titleStyle}>Suggested Fix:</h2>
+                            {/*<div style={paneStyle}>*/}
+                            {/*                                <h2 style={titleStyle}>Suggested Fix:</h2>
                                 <pre
                                     className="content"
                                     dangerouslySetInnerHTML={{ __html: highlightCode(this.state.suggestedSnippet) }}
                                 />*/}
 
+                            <div style={paneStyle}>
+
                                 <h2 style={titleStyle}>Suggestion Location:</h2>
                                 <p
                                     className="content"
-                                    dangerouslySetInnerHTML={{
-                                        __html: this.state.suggestionFileName,
-                                    }}
+                                    style={{ fontFamily: 'monospace', whiteSpace: 'pre' }}
+                                    dangerouslySetInnerHTML={{ __html: highlightCode(this.state.suggestionFileName) }}
                                 />
+                            </div>
+
+
+                            <div style={paneStyle}>
+                                <h2 style={titleStyle}>Suggested Fix:</h2>
+                                {this.renderDiff()}
+                            </div>
+
+                            <div style={paneStyle}>
                                 <h2 style={titleStyle}>Explanation:</h2>
                                 <p
                                     className="content"
+                                    style={{ fontFamily: 'monospace', whiteSpace: 'pre' }}
                                     dangerouslySetInnerHTML={{
                                         __html: this.state.snippetExplanation,
                                     }}
                                 />
+                            </div>
 
+
+
+                            <div style={{
+                                display: 'flex',
+                                justifyContent: 'center',
+                                gap: '5px',
+                                padding: '2px',
+                                //border: '1px solid grey',
+                                //borderRadius: '5px',
+                                marginTop: '2px'
+                            }}>
                                 <button
                                     onClick={() => {
                                         this.props.onIgnoreFile(true);
+                                        if (!this.state.llmModifiedFileContent) {
+                                            console.warn('No LLM fix available to accept.');
+                                            return;
+                                        }
+                                        const llmPayload = {
+                                            ...this.state.llmModifiedFileContent,
+                                            data: {
+                                                ...this.state.llmModifiedFileContent.data,
+                                                originalFileContent: this.state.originalFileContent,
+                                            }
+                                        };
                                         Utilities.sendToServer(
                                             this.props.ws,
                                             webSocketSendMessage.llm_modified_file_content,
                                             {
-                                                llmModifiedFileContent: this.state.llmModifiedFileContent,
-                                                violatedCode: Utilities.removeSrcmlAnnotations(this.state.d.surroundingNodes)
+                                                llmModifiedFileContent: llmPayload,
+                                                originalFileContent: this.state.originalFileContent
                                             }
 
                                         );
                                         console.log(this.state.llmModifiedFileContent);
                                     }}
-                                    style={buttonStyle}
+                                    style={{ ...buttonStyle, backgroundColor: '#3B71CA', color: 'white' }}
                                 >
                                     Accept Fix
                                 </button>
                                 <button
-                                    onClick={() => {
-                                        this.props.onIgnoreFile(true);
+                                    onClick={(e) => {
+                                        e.stopPropagation(); // Prevent the div's onClick from firing
                                         Utilities.sendToServer(
                                             this.props.ws,
-                                            webSocketSendMessage.send_info_for_edit_fix,
-                                            this.state.llmModifiedFileContent,
+                                            webSocketSendMessage.send_llm_snippet_msg,
+                                            {
+                                                suggestedSnippet: this.state.suggestedSnippet,
+                                                snippetExplanation:this.state.snippetExplanation,
+                                                //violatedCode: Utilities.removeSrcmlAnnotations(this.state.d.surroundingNodes)
+                                            }
 
                                         );
                                     }}
-                                    style={{ ...buttonStyle, marginLeft: '10px' }} // Inline styling for the new button
+                                    style={{ ...buttonStyle, marginLeft: '10px', backgroundColor: '#9FA6B2', color: 'white' }} // Inline styling for the new button
                                 >
                                     Edit Fix
                                 </button>
 
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation(); // Prevent the div's onClick from firing
+                                        this.handleEditFix(
+                                            this.state.suggestionFileName,
+                                            uniqueKey
+                                        );
+                                    }}
+                                    style={{ ...buttonStyle, marginLeft: '10px', backgroundColor: 'green', color: 'white' }} // Inline styling for the new button
+                                >
+                                    Regenerate Fix
+                                </button>
+
 
                             </div>
-                            <div style={paneStyle}>
-                                <h2 style={titleStyle}>Suggested Fix:</h2>
-                                {this.renderDiff()}
-                            </div>
+
                         </div>
                     )}
                 </div>

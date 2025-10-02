@@ -6,23 +6,41 @@ export async function suggestFix(
     violation,
     exampleFilePath,
     violationFilePath,
+    violationFileContent,
     setState,
 ) {
 
-    const prompt = `Here is a design rule and its description: ${rule}
-    Here is a code example that follows this design rule: ${example}
-    The example file path is ${exampleFilePath}
-    Now, here is a code snippet that violates this design rule: ${violation}
-    The violated code's file path is ${violationFilePath}
-    Can you suggest a fix to make this violation follow the given design rule?
-    Generate code with surrounding code included that follows the design rule.
-    Be sure to maintain proper whitespace with \\t and \\n.
-    Give a brief explanation of your fix as well.
-    Ensure to include the fileName of where to insert the fix in the format Example.java.
-    Strictly output in JSON format. The JSON should have the following format:{"code": "...", "explanation": "...", "fileName": "..."}`;
+    const prompt = `You are assisting with enforcing the following design rule:
+${rule}
+
+Here is a code example that follows the rule:
+${example}
+Example file path: ${exampleFilePath}
+
+<<<ORIGINAL_FILE_PATH>>>
+${violationFilePath}
+<<<END_ORIGINAL_FILE_PATH>>>
+
+<<<ORIGINAL_FILE_CONTENT>>>
+${violationFileContent}
+<<<END_ORIGINAL_FILE_CONTENT>>>
+
+<<<VIOLATION_SNIPPET>>>
+${violation}
+<<<END_VIOLATION_SNIPPET>>>
+
+Rewrite the original file so it satisfies the rule while preserving every unrelated line verbatim. Constraints:
+- Copy every existing package declaration, import statement, comment, Javadoc, and formatting exactly as provided unless a specific line must change to satisfy the rule.
+- Do NOT delete or reorder imports; append new imports after the existing block if required.
+- When you modify a line, change only the minimal portion needed; leave all other lines identical.
+- Preserve indentation and whitespace on all untouched lines.
+
+Respond strictly as JSON with the structure {\"modifiedFileContent\":\"...\", \"explanation\":\"...\", \"fileName\":\"...\"}.`;
 
     let attempt = 1;
     let success = false;
+    console.log("violation codde sent to chatGPT:");
+    console.log(violationFileContent);
 
     while (attempt <= 3 && !success) {
         try {
@@ -45,9 +63,12 @@ export async function suggestFix(
             const stripped = suggestedSnippet.replace(/^`json|`json$/g, "").trim();
             const parsedJSON = JSON.parse(stripped);
 
+            console.log("Solution from chatGPT:");
+            console.log(parsedJSON);
+
             // sets the relevant state in the React component that made the request
             // see ../ui/rulePanel.js for more details
-            setState({suggestedSnippet: parsedJSON["code"]});
+            setState({suggestedSnippet: parsedJSON["modifiedFileContent"]});
             setState({snippetExplanation: parsedJSON["explanation"]});
             setState({suggestionFileName: parsedJSON["fileName"]});
 
@@ -56,8 +77,9 @@ export async function suggestFix(
                 data: {
                     filePath: `${violationFilePath}`,
                     fileToChange: `${parsedJSON["fileName"]}`,
-                    modifiedFileContent: `${parsedJSON["code"]}`,
-                    explanation: `${parsedJSON["explanation"]}`,
+                    modifiedFileContent: parsedJSON["modifiedFileContent"],
+                    explanation: parsedJSON["explanation"],
+                    originalFileContent: violationFileContent,
                 },
             };
 
@@ -65,6 +87,7 @@ export async function suggestFix(
             setState({llmModifiedFileContent: llmModifiedFileContent});
 
             success = true;
+            return llmModifiedFileContent;
         } catch (error) {
             console.log(error);
             success = false;
@@ -75,22 +98,26 @@ export async function suggestFix(
 
 
 
-export async function editFix(key, getConversationFromSessionStorage, saveConversationToSessionStorage, setState, fileContentToSendToGPT) {
+export async function editFix(fileContentToSendToGPT,conversationHistory,setState) {
 
     console.log("CAME TO EDIT FIX");
-    console.log(fileContentToSendToGPT);
+    //console.log(fileContentToSendToGPT);
+    //conversationHistory = {role:'user',content:conversationHistory};
 
     // Create the additional prompt using the projectPath
-    const additionalPrompt = `The solution you provided is excellent, however, I am confused how to incorporate your fix with in the code of the "fileName" variable of your solution. 
-    I am providing you with the full content from the "fileName" file. Integrate your "code" within that code base. Be sure to maintain proper whitespace with \\t and \\n.
-    Give a brief explanation of your fix as well.
-    Strictly output in JSON format. The JSON should have the following format:{"code": "I am sorry", "explanation": "I am sorry that it didnt work", "fileName": "sorry.txt"} 
-    \n My code - \n ${fileContentToSendToGPT}`;
+    const additionalPrompt = `You previously suggested the following fix (JSON snippet below). Integrate it into the provided file without removing unrelated lines.
 
-    // Get conversation history from session storage
-    const conversationHistory = getConversationFromSessionStorage(key);
-    // Add the new prompt to the conversation history
-    const continuedConversation = [...conversationHistory, { role: "user", content: additionalPrompt }];
+<<<PREVIOUS_RESPONSE>>>
+${conversationHistory}
+<<<END_PREVIOUS_RESPONSE>>>
+
+<<<ORIGINAL_FILE_CONTENT>>>
+${fileContentToSendToGPT}
+<<<END_ORIGINAL_FILE_CONTENT>>>
+
+Rewrite the file so it satisfies the rule while preserving every existing package, import, comment, and formatting exactly as provided unless a line must change to satisfy the rule. Do not delete or reorder imports; only append new ones if required. Modify only the minimal code needed and keep all untouched lines verbatim.
+Respond strictly as JSON with the structure {\"modifiedFileContent\":\"...\", \"explanation\":\"...\", \"fileName\":\"...\"}.`;
+    const continuedConversation = [ { role: "user", content: additionalPrompt }];
 
     let attempt = 1;
     let success = false;
@@ -117,8 +144,8 @@ export async function editFix(key, getConversationFromSessionStorage, saveConver
             console.log(parsedJSON);
 
             // Update state with new suggested snippet, explanation, and file name
-            setState({
-                suggestedSnippet: parsedJSON["code"],
+            setState((prevState) => ({
+                suggestedSnippet: parsedJSON["modifiedFileContent"],
                 snippetExplanation: parsedJSON["explanation"],
                 suggestionFileName: parsedJSON["fileName"],
                 llmModifiedFileContent: {
@@ -126,16 +153,18 @@ export async function editFix(key, getConversationFromSessionStorage, saveConver
                     data: {
                         filePath: `${parsedJSON["fileName"]}`, // Assuming the initial prompt contains the file path
                         fileToChange: `${parsedJSON["fileName"]}`,
-                        modifiedFileContent: `${parsedJSON["code"]}`,
-                        explanation: `${parsedJSON["explanation"]}`,
+                        modifiedFileContent: parsedJSON["modifiedFileContent"],
+                        explanation: parsedJSON["explanation"],
+                        originalFileContent: prevState?.originalFileContent ?? '',
                     },
                 },
-            });
+            }));
 
             // Update conversation history in session storage
-            saveConversationToSessionStorage(key, [...continuedConversation, { role: "assistant", content: suggestedSnippet }]);
+            //saveConversationToSessionStorage(key, [...continuedConversation, { role: "assistant", content: suggestedSnippet }]);
 
             success = true;
+            console.log("got second data from chatGPT");
         } catch (error) {
             console.log(error);
             success = false;
@@ -143,6 +172,3 @@ export async function editFix(key, getConversationFromSessionStorage, saveConver
         }
     }
 }
-
-
-
