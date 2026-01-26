@@ -10,7 +10,7 @@ export async function suggestFix(
     setState,
 ) {
 
-    const prompt = `You are assisting with enforcing the following design rule:
+    const promptA = `You are assisting with enforcing the following design rule:
 ${rule}
 
 Here is a code example that follows the rule:
@@ -35,12 +35,12 @@ Rewrite the original file so it satisfies the rule while preserving every unrela
 - When you modify a line, change only the minimal portion needed; leave all other lines identical.
 - Preserve indentation and whitespace on all untouched lines.
 
-Respond strictly as JSON with the structure {\"modifiedFileContent\":\"...\", \"explanation\":\"...\", \"fileName\":\"...\"}.`;
+Take your time and provide an unstructured response. Include: (1) a detailed explanation of your changes, (2) the fully rewritten file content, and (3) the target file name/path. Do not output JSON in this step.`;
 
     let attempt = 1;
     let success = false;
-    console.log("violation codde sent to chatGPT:");
-    console.log(violationFileContent);
+    console.log("violation codde is sent to chatGPT:");
+    //console.log(violationFileContent);
 
     while (attempt <= 3 && !success) {
         try {
@@ -53,32 +53,54 @@ Respond strictly as JSON with the structure {\"modifiedFileContent\":\"...\", \"
                 dangerouslyAllowBrowser: true,
             });
 
-            const chatCompletion = await openai.chat.completions.create({
-                model: "gpt-3.5-turbo",
+            const chatCompletionA = await openai.chat.completions.create({
+                model: "gpt-5.2",
                 temperature: 0.75,
-                messages: [{role: "user", content: prompt}],
+                messages: [{role: "user", content: promptA}],
             });
 
-            const suggestedSnippet = chatCompletion.choices[0].message.content;
+            const responseA = chatCompletionA.choices[0].message.content;
+
+            console.log("ReceivedResponseA from chatGPT:");
+            //console.log(responseA);
+
+            const promptB = `Here is the input prompt given to you to fix a design rule:
+${promptA}
+
+This is the response you generated:
+${responseA}
+
+Now, based on these, structure the response to this prompt in a structured JSON format. The JSON should have the following format: {\"explanation\":\"...\", \"code\":\"...\", \"fileName\":\"...\"}. \"code\" must be the fully rewritten file content. Return only JSON.`;
+
+            const chatCompletionB = await openai.chat.completions.create({
+                model: "gpt-5.2",
+                temperature: 0.2,
+                messages: [{role: "user", content: promptB}],
+            });
+
+            const suggestedSnippet = chatCompletionB.choices[0].message.content;
             const stripped = suggestedSnippet.replace(/^`json|`json$/g, "").trim();
             const parsedJSON = JSON.parse(stripped);
+            const modifiedFileContent = parsedJSON["modifiedFileContent"] ?? parsedJSON["code"] ?? "";
+            const explanation = parsedJSON["explanation"] ?? "";
+            const fileName = parsedJSON["fileName"] ?? violationFilePath ?? "";
 
-            console.log("Solution from chatGPT:");
+            console.log("Final Solution from chatGPT:");
             console.log(parsedJSON);
 
             // sets the relevant state in the React component that made the request
             // see ../ui/rulePanel.js for more details
-            setState({suggestedSnippet: parsedJSON["modifiedFileContent"]});
-            setState({snippetExplanation: parsedJSON["explanation"]});
-            setState({suggestionFileName: parsedJSON["fileName"]});
+            setState({suggestedSnippet: modifiedFileContent});
+            setState({snippetExplanation: explanation});
+            setState({suggestionFileName: fileName});
 
             const llmModifiedFileContent = {
                 command: "LLM_MODIFIED_FILE_CONTENT",
                 data: {
                     filePath: `${violationFilePath}`,
-                    fileToChange: `${parsedJSON["fileName"]}`,
-                    modifiedFileContent: parsedJSON["modifiedFileContent"],
-                    explanation: parsedJSON["explanation"],
+                    fileToChange: `${fileName}`,
+                    modifiedFileContent: modifiedFileContent,
+                    explanation: explanation,
                     originalFileContent: violationFileContent,
                 },
             };

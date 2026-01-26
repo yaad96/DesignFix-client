@@ -855,7 +855,12 @@ class SnippetView extends Component {
                                 <h2 style={titleStyle}>Suggestion Location:</h2>
                                 <p
                                     className="content"
-                                    style={{ fontFamily: 'monospace', whiteSpace: 'pre' }}
+                                    style={{
+                                        fontFamily: 'monospace',
+                                        whiteSpace: 'pre-wrap',
+                                        overflowWrap: 'anywhere',
+                                        wordBreak: 'break-word',
+                                    }}
                                     dangerouslySetInnerHTML={{ __html: highlightCode(this.state.suggestionFileName) }}
                                 />
                             </div>
@@ -870,7 +875,12 @@ class SnippetView extends Component {
                                 <h2 style={titleStyle}>Explanation:</h2>
                                 <p
                                     className="content"
-                                    style={{ fontFamily: 'monospace', whiteSpace: 'pre' }}
+                                    style={{
+                                        fontFamily: 'monospace',
+                                        whiteSpace: 'pre-wrap',
+                                        overflowWrap: 'anywhere',
+                                        wordBreak: 'break-word',
+                                    }}
                                     dangerouslySetInnerHTML={{
                                         __html: this.state.snippetExplanation,
                                     }}
