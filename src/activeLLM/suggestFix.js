@@ -1,5 +1,240 @@
 import OpenAI from "openai";
 
+/**
+ * Validates whether the returned content is likely a full file or just a partial snippet.
+ * Returns an object with validation results.
+ */
+function validateFullFileContent(modifiedContent, originalContent) {
+    const result = {
+        isFullFile: true,
+        warnings: [],
+        confidence: 1.0
+    };
+
+    if (!modifiedContent || modifiedContent.trim().length === 0) {
+        result.isFullFile = false;
+        result.warnings.push("Modified content is empty");
+        result.confidence = 0;
+        return result;
+    }
+
+    const originalLines = originalContent.split('\n');
+    const modifiedLines = modifiedContent.split('\n');
+    const originalLineCount = originalLines.length;
+    const modifiedLineCount = modifiedLines.length;
+
+    // Check 1: Line count ratio - modified should be at least 70% of original
+    const lineRatio = modifiedLineCount / originalLineCount;
+    if (lineRatio < 0.7) {
+        result.isFullFile = false;
+        result.warnings.push(`Line count too low: ${modifiedLineCount} vs original ${originalLineCount} (${(lineRatio * 100).toFixed(1)}%)`);
+        result.confidence -= 0.3;
+    }
+
+    // Check 2: For Java files, check for package declaration
+    const originalHasPackage = /^\s*package\s+[\w.]+\s*;/m.test(originalContent);
+    const modifiedHasPackage = /^\s*package\s+[\w.]+\s*;/m.test(modifiedContent);
+    if (originalHasPackage && !modifiedHasPackage) {
+        result.isFullFile = false;
+        result.warnings.push("Missing package declaration");
+        result.confidence -= 0.25;
+    }
+
+    // Check 3: Check for import statements preservation
+    const originalImports = (originalContent.match(/^\s*import\s+[\w.*]+\s*;/gm) || []).length;
+    const modifiedImports = (modifiedContent.match(/^\s*import\s+[\w.*]+\s*;/gm) || []).length;
+    if (originalImports > 0 && modifiedImports < originalImports * 0.5) {
+        result.isFullFile = false;
+        result.warnings.push(`Missing imports: ${modifiedImports} vs original ${originalImports}`);
+        result.confidence -= 0.25;
+    }
+
+    // Check 4: Check for class/interface declaration
+    const originalHasClass = /^\s*(public\s+)?(abstract\s+)?(class|interface|enum)\s+\w+/m.test(originalContent);
+    const modifiedHasClass = /^\s*(public\s+)?(abstract\s+)?(class|interface|enum)\s+\w+/m.test(modifiedContent);
+    if (originalHasClass && !modifiedHasClass) {
+        result.isFullFile = false;
+        result.warnings.push("Missing class/interface declaration");
+        result.confidence -= 0.25;
+    }
+
+    // Check 5: Character length ratio
+    const charRatio = modifiedContent.length / originalContent.length;
+    if (charRatio < 0.5) {
+        result.isFullFile = false;
+        result.warnings.push(`Character count too low: ${modifiedContent.length} vs original ${originalContent.length} (${(charRatio * 100).toFixed(1)}%)`);
+        result.confidence -= 0.2;
+    }
+
+    result.confidence = Math.max(0, result.confidence);
+    result.isFullFile = result.confidence >= 0.7;
+
+    return result;
+}
+
+/**
+ * Attempts to merge a code snippet into the original file content.
+ * Uses context matching to find the right location for the snippet.
+ */
+function mergeSnippetIntoOriginal(snippet, originalContent, violationSnippet) {
+    console.log("Attempting to merge snippet into original file...");
+
+    const originalLines = originalContent.split('\n');
+    const snippetLines = snippet.split('\n').filter(line => line.trim().length > 0);
+
+    if (snippetLines.length === 0) {
+        console.warn("Snippet is empty, returning original content");
+        return originalContent;
+    }
+
+    // Strategy 1: Try to find the violation snippet in original and replace the matching region
+    if (violationSnippet && violationSnippet.trim().length > 0) {
+        const violationLines = violationSnippet.split('\n').filter(line => line.trim().length > 0);
+
+        if (violationLines.length > 0) {
+            // Find where the violation starts in the original
+            const violationStart = findSnippetLocation(originalLines, violationLines);
+
+            if (violationStart !== -1) {
+                console.log(`Found violation at line ${violationStart + 1}`);
+
+                // Find the extent of the violation in original
+                const violationEnd = violationStart + violationLines.length;
+
+                // Replace the violation region with the snippet
+                const beforeViolation = originalLines.slice(0, violationStart);
+                const afterViolation = originalLines.slice(violationEnd);
+
+                const merged = [...beforeViolation, ...snippetLines, ...afterViolation].join('\n');
+                console.log("Successfully merged snippet using violation location");
+                return merged;
+            }
+        }
+    }
+
+    // Strategy 2: Try to find context lines from the snippet in the original
+    // Look for the first few non-empty lines of the snippet in the original
+    const contextLines = snippetLines.slice(0, Math.min(3, snippetLines.length));
+    const snippetLocation = findSnippetLocation(originalLines, contextLines);
+
+    if (snippetLocation !== -1) {
+        console.log(`Found snippet context at line ${snippetLocation + 1}`);
+
+        // Replace from this location with the snippet
+        const beforeSnippet = originalLines.slice(0, snippetLocation);
+        const afterSnippet = originalLines.slice(snippetLocation + snippetLines.length);
+
+        const merged = [...beforeSnippet, ...snippetLines, ...afterSnippet].join('\n');
+        console.log("Successfully merged snippet using context matching");
+        return merged;
+    }
+
+    // Strategy 3: If snippet contains method signature, find and replace that method
+    const methodMatch = snippet.match(/^\s*(public|private|protected)?\s*(static)?\s*[\w<>\[\]]+\s+(\w+)\s*\([^)]*\)/m);
+    if (methodMatch) {
+        const methodName = methodMatch[3];
+        console.log(`Looking for method: ${methodName}`);
+
+        const methodLocation = findMethodInOriginal(originalLines, methodName);
+        if (methodLocation.start !== -1) {
+            console.log(`Found method ${methodName} at lines ${methodLocation.start + 1}-${methodLocation.end + 1}`);
+
+            const beforeMethod = originalLines.slice(0, methodLocation.start);
+            const afterMethod = originalLines.slice(methodLocation.end + 1);
+
+            const merged = [...beforeMethod, ...snippetLines, ...afterMethod].join('\n');
+            console.log("Successfully merged snippet by replacing method");
+            return merged;
+        }
+    }
+
+    console.warn("Could not find suitable merge location, returning original with snippet appended as comment");
+    // Last resort: return original with a warning comment
+    return originalContent + "\n\n// TODO: The following fix could not be automatically merged:\n/*\n" + snippet + "\n*/";
+}
+
+/**
+ * Finds the starting line index where a snippet appears in the original lines.
+ * Uses fuzzy matching to handle whitespace differences.
+ */
+function findSnippetLocation(originalLines, snippetLines) {
+    if (snippetLines.length === 0) return -1;
+
+    const normalize = (line) => line.trim().replace(/\s+/g, ' ');
+    const firstSnippetLine = normalize(snippetLines[0]);
+
+    for (let i = 0; i < originalLines.length; i++) {
+        if (normalize(originalLines[i]) === firstSnippetLine) {
+            // Check if subsequent lines also match
+            let allMatch = true;
+            for (let j = 1; j < snippetLines.length && (i + j) < originalLines.length; j++) {
+                if (normalize(originalLines[i + j]) !== normalize(snippetLines[j])) {
+                    allMatch = false;
+                    break;
+                }
+            }
+            if (allMatch) {
+                return i;
+            }
+        }
+    }
+    return -1;
+}
+
+/**
+ * Finds a method's start and end lines in the original content.
+ */
+function findMethodInOriginal(originalLines, methodName) {
+    const methodPattern = new RegExp(`^\\s*(public|private|protected)?\\s*(static)?\\s*[\\w<>\\[\\]]+\\s+${methodName}\\s*\\(`);
+
+    for (let i = 0; i < originalLines.length; i++) {
+        if (methodPattern.test(originalLines[i])) {
+            // Found method start, now find the end by counting braces
+            let braceCount = 0;
+            let methodStarted = false;
+
+            for (let j = i; j < originalLines.length; j++) {
+                const line = originalLines[j];
+                for (const char of line) {
+                    if (char === '{') {
+                        braceCount++;
+                        methodStarted = true;
+                    } else if (char === '}') {
+                        braceCount--;
+                    }
+                }
+                if (methodStarted && braceCount === 0) {
+                    return { start: i, end: j };
+                }
+            }
+            // If we couldn't find the end, return just the start
+            return { start: i, end: i };
+        }
+    }
+    return { start: -1, end: -1 };
+}
+
+/**
+ * Ensures the modified content is a full file by validating and merging if needed.
+ */
+function ensureFullFileContent(modifiedContent, originalContent, violationSnippet) {
+    const validation = validateFullFileContent(modifiedContent, originalContent);
+
+    console.log("Content validation result:", {
+        isFullFile: validation.isFullFile,
+        confidence: validation.confidence,
+        warnings: validation.warnings
+    });
+
+    if (validation.isFullFile) {
+        console.log("Content validated as full file");
+        return modifiedContent;
+    }
+
+    console.warn("Content appears to be partial, attempting to merge into original file");
+    return mergeSnippetIntoOriginal(modifiedContent, originalContent, violationSnippet);
+}
+
 export async function suggestFix(
     rule,
     example,
@@ -81,9 +316,16 @@ Now, based on these, structure the response to this prompt in a structured JSON 
             const suggestedSnippet = chatCompletionB.choices[0].message.content;
             const stripped = suggestedSnippet.replace(/^`json|`json$/g, "").trim();
             const parsedJSON = JSON.parse(stripped);
-            const modifiedFileContent = parsedJSON["modifiedFileContent"] ?? parsedJSON["code"] ?? "";
+            const rawModifiedContent = parsedJSON["modifiedFileContent"] ?? parsedJSON["code"] ?? "";
             const explanation = parsedJSON["explanation"] ?? "";
             const fileName = parsedJSON["fileName"] ?? violationFilePath ?? "";
+
+            // Validate and ensure full file content
+            const modifiedFileContent = ensureFullFileContent(
+                rawModifiedContent,
+                violationFileContent,
+                violation
+            );
 
             console.log("Final Solution from chatGPT:");
             console.log(parsedJSON);
@@ -118,79 +360,3 @@ Now, based on these, structure the response to this prompt in a structured JSON 
     }
 }
 
-
-
-export async function editFix(fileContentToSendToGPT,conversationHistory,setState) {
-
-    console.log("CAME TO EDIT FIX");
-    //console.log(fileContentToSendToGPT);
-    //conversationHistory = {role:'user',content:conversationHistory};
-
-    // Create the additional prompt using the projectPath
-    const additionalPrompt = `You previously suggested the following fix (JSON snippet below). Integrate it into the provided file without removing unrelated lines.
-
-<<<PREVIOUS_RESPONSE>>>
-${conversationHistory}
-<<<END_PREVIOUS_RESPONSE>>>
-
-<<<ORIGINAL_FILE_CONTENT>>>
-${fileContentToSendToGPT}
-<<<END_ORIGINAL_FILE_CONTENT>>>
-
-Rewrite the file so it satisfies the rule while preserving every existing package, import, comment, and formatting exactly as provided unless a line must change to satisfy the rule. Do not delete or reorder imports; only append new ones if required. Modify only the minimal code needed and keep all untouched lines verbatim.
-Respond strictly as JSON with the structure {\"modifiedFileContent\":\"...\", \"explanation\":\"...\", \"fileName\":\"...\"}.`;
-    const continuedConversation = [ { role: "user", content: additionalPrompt }];
-
-    let attempt = 1;
-    let success = false;
-
-    while (attempt <= 3 && !success) {
-        try {
-            const apiKey = localStorage.getItem("OPENAI_API_KEY");
-            const openai = new OpenAI({
-                apiKey,
-                dangerouslyAllowBrowser: true,
-            });
-
-            // Send the continued conversation to OpenAI
-            const chatCompletion = await openai.chat.completions.create({
-                model: "gpt-3.5-turbo",
-                temperature: 0.75,
-                messages: continuedConversation,
-            });
-
-            const suggestedSnippet = chatCompletion.choices[0].message.content;
-            const stripped = suggestedSnippet.replace(/^`json|`json$/g, "").trim();
-            const parsedJSON = JSON.parse(stripped);
-
-            console.log(parsedJSON);
-
-            // Update state with new suggested snippet, explanation, and file name
-            setState((prevState) => ({
-                suggestedSnippet: parsedJSON["modifiedFileContent"],
-                snippetExplanation: parsedJSON["explanation"],
-                suggestionFileName: parsedJSON["fileName"],
-                llmModifiedFileContent: {
-                    command: "LLM_MODIFIED_FILE_CONTENT",
-                    data: {
-                        filePath: `${parsedJSON["fileName"]}`, // Assuming the initial prompt contains the file path
-                        fileToChange: `${parsedJSON["fileName"]}`,
-                        modifiedFileContent: parsedJSON["modifiedFileContent"],
-                        explanation: parsedJSON["explanation"],
-                        originalFileContent: prevState?.originalFileContent ?? '',
-                    },
-                },
-            }));
-
-            // Update conversation history in session storage
-            //saveConversationToSessionStorage(key, [...continuedConversation, { role: "assistant", content: suggestedSnippet }]);
-
-            success = true;
-            console.log("got second data from chatGPT");
-        } catch (error) {
-            console.log(error);
-            success = false;
-            attempt++;
-        }
-    }
-}

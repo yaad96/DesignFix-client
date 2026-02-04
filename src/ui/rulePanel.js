@@ -21,7 +21,7 @@ import { webSocketSendMessage } from "../core/coreConstants";
 import { relatives } from "../core/ruleExecutorConstants";
 import { hashConst, none_filePath } from "./uiConstants";
 
-import { suggestFix, editFix } from "../activeLLM/suggestFix";
+import { suggestFix} from "../activeLLM/suggestFix";
 import Prism from 'prismjs';
 import '../../src/prism-vs.css'; // Choose any theme you like
 
@@ -927,7 +927,7 @@ class SnippetView extends Component {
                                 >
                                     Accept Fix
                                 </button>
-                                <button
+                                {/*<button
                                     onClick={(e) => {
                                         e.stopPropagation(); // Prevent the div's onClick from firing
                                         Utilities.sendToServer(
@@ -957,7 +957,7 @@ class SnippetView extends Component {
                                     style={{ ...buttonStyle, marginLeft: '10px', backgroundColor: 'green', color: 'white' }} // Inline styling for the new button
                                 >
                                     Regenerate Fix
-                                </button>
+                                </button>*/}
 
 
                             </div>
