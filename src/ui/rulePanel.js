@@ -536,12 +536,14 @@ class SnippetView extends Component {
         rule,
         example,
         snippet,
+        surroundingCode,
         exampleFilePath,
         violationFilePath,
         key
     ) => {
         const parsedSnippet = Utilities.removeSrcmlAnnotations(snippet);
         const parsedExample = Utilities.removeSrcmlAnnotations(example);
+        const parsedSurroundingCode = Utilities.removeSrcmlAnnotations(surroundingCode);
 
         const normalizePath = (filePath) => filePath.replace(/\\/g, '/');
         const targetPath = normalizePath(violationFilePath);
@@ -567,6 +569,7 @@ class SnippetView extends Component {
                 rule,
                 parsedExample,
                 parsedSnippet,
+                parsedSurroundingCode,
                 exampleFilePath,
                 violationFilePath,
                 violationFileContent,
@@ -822,6 +825,7 @@ class SnippetView extends Component {
                                                 this.handleSuggestion(
                                                     this.state.description,
                                                     this.state.exampleSnippet,
+                                                    this.state.d.snippet,
                                                     this.state.d.surroundingNodes,
                                                     this.state.exampleFilePath,
                                                     this.state.d.filePath,

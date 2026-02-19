@@ -239,6 +239,7 @@ export async function suggestFix(
     rule,
     example,
     violation,
+    surroundingCode,
     exampleFilePath,
     violationFilePath,
     violationFileContent,
@@ -260,6 +261,11 @@ ${violationFilePath}
 ${violationFileContent}
 <<<END_ORIGINAL_FILE_CONTENT>>>
 
+Here is the surrounding class/method structure around the violation, showing the enclosing context:
+<<<SURROUNDING_CONTEXT>>>
+${surroundingCode}
+<<<END_SURROUNDING_CONTEXT>>>
+
 <<<VIOLATION_SNIPPET>>>
 ${violation}
 <<<END_VIOLATION_SNIPPET>>>
@@ -274,8 +280,8 @@ Take your time and provide an unstructured response. Include: (1) a detailed exp
 
     let attempt = 1;
     let success = false;
-    console.log("violation codde is sent to chatGPT:");
-    //console.log(violationFileContent);
+    console.log("=== PROMPT SENT TO chatGPT ===");
+    //console.log(promptA);
 
     while (attempt <= 3 && !success) {
         try {
@@ -327,8 +333,8 @@ Now, based on these, structure the response to this prompt in a structured JSON 
                 violation
             );
 
-            console.log("Final Solution from chatGPT:");
-            console.log(parsedJSON);
+            console.log("Final Solution from chatGPT received:");
+            //console.log(parsedJSON);
 
             // sets the relevant state in the React component that made the request
             // see ../ui/rulePanel.js for more details
