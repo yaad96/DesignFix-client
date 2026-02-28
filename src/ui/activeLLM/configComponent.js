@@ -24,8 +24,10 @@ const ConfigComponent = () => {
 
     const handleButtonClick = async () => {
         try {
+            // Use local proxy to avoid CORS issues with direct browser-to-API calls
             const openai = new OpenAI({
                 apiKey,
+                baseURL: window.location.origin + "/openai-proxy/v1",
                 dangerouslyAllowBrowser: true,
             });
 

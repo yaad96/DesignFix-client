@@ -289,8 +289,10 @@ Take your time and provide an unstructured response. Include: (1) a detailed exp
             const apiKey = localStorage.getItem("OPENAI_API_KEY");
 
             // Create a new OpenAI instance with the API key from localStorage
+            // Use local proxy to avoid CORS issues with direct browser-to-API calls
             const openai = new OpenAI({
                 apiKey,
+                baseURL: window.location.origin + "/openai-proxy/v1",
                 dangerouslyAllowBrowser: true,
             });
 
