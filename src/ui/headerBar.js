@@ -150,7 +150,7 @@ function mapStateToProps(state) {
             props.title = "ruleTable.json is changed.";
             break;
         case hashConst.index:
-            props.title = "Active Documentation";
+            props.title = "DesignFix";
             break;
         case hashConst.violatedRules:
             props.title = "Violated Rules";

@@ -1,4 +1,5 @@
 const MonacoWebpackPlugin = require('monaco-editor-webpack-plugin');
+const webpack = require('webpack');
 
 module.exports = (config /*, env*/) => {
 
@@ -6,6 +7,17 @@ module.exports = (config /*, env*/) => {
 
     // Heavy bundle! There are options though
     config.optimization.minimize = false;
+
+    // Provide a browser polyfill for `process` (required by the OpenAI SDK,
+    // which is loaded in a chunk that otherwise throws "process is not defined")
+    config.plugins.push(
+        new webpack.ProvidePlugin({
+            process: 'process/browser',
+        }),
+        new webpack.DefinePlugin({
+            'process.env': JSON.stringify(process.env || {}),
+        })
+    );
 
     // Monaco ESM start
     const options = {

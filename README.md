@@ -1,8 +1,8 @@
-# Active Documentation
+# DesignFix
 
 This app is written in "React" framework.
-- It communicates with the [IDE Connector](https://github.com/devuxd/ActiveDocumentation/tree/RulePad-version) using "Web-Socket".
-- It is based on _srcML_ library, which should be installed as instructed [here](https://github.com/devuxd/active-doc-client/wiki#installing-srcml).
+- It communicates with the [IDE Connector](https://github.com/yaad96/DesignFix--Extension) using "Web-Socket".
+- It is based on _srcML_ library, which should be installed as instructed [here](https://github.com/yaad96/DesignFix-client/wiki#installing-srcml).
 
 ## spmf.jar
 

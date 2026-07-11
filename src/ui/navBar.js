@@ -48,7 +48,7 @@ export class NavBar extends Component {
                         </NavItem>
                     </Nav>
                 </Navbar.Collapse>
-                {/* Opt-In to activeLLM button */}
+                {/* Opt-In to DesignFix LLM button */}
                 <span>
                     <ConfigComponent/>
                 </span>

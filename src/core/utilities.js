@@ -266,6 +266,10 @@ class Utilities {
     }
 
     static removeSrcmlAnnotations(xmlString) {
+        // guard against null/undefined (e.g., a rule with no rule-satisfying example)
+        if (xmlString === null || xmlString === undefined) {
+            return "";
+        }
         // removes srcml tags
         xmlString = xmlString.replace(/<[^>]*>/g, "");
         // replaces &lt; with <

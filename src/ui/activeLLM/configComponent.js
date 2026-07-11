@@ -89,7 +89,7 @@ const ConfigComponent = () => {
         <div style={styles.container}>
             {!showSuccessMessage && !showForm && (
                 <button style={styles.button} onClick={handleOptInClick}>
-                    Opt-In to activeLLM
+                    Opt-In to DesignFix LLM
                 </button>
             )}
             {showForm && (

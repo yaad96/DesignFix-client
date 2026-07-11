@@ -1,6 +1,6 @@
 {
-  "short_name": "ActiveDoc",
-  "name": "Active Documentation",
+  "short_name": "DesignFix",
+  "name": "DesignFix",
 
   "start_url": "./index.html",
   "display": "standalone",
