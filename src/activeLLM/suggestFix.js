@@ -323,6 +323,20 @@ Produce the minimal set of file edits that makes the code satisfy the rule. Cons
 
 IMPORTANT: The code above has ALREADY been determined to VIOLATE this rule by a static analyzer. The violation is real. Do not conclude that no change is needed. Your job is to produce the concrete edit that makes the analyzer pass. If the fix belongs in a related file (e.g. registering a class in a central servlet), edit that file.
 
+Before producing your response, internally check that:
+
+- the proposed edit directly satisfies the stated design rule;
+- the rule-satisfying example is used as a structural pattern, but
+  example-specific class names, method names, variables, arguments,
+  and types are adapted to the violating code;
+- the proposed edit is the smallest change necessary;
+- all unrelated declarations, imports, comments, formatting, and
+  behavior remain unchanged;
+- every rewritten file is complete and syntactically coherent.
+
+Use this check to improve the answer, but do not add a separate
+self-check section to the response.
+
 Take your time and provide an unstructured response. Include: (1) a detailed explanation of your changes, and (2) for EACH file you change, its exact path followed by its fully rewritten content. Do not output JSON in this step.`;
 
     let attempt = 1;
@@ -345,7 +359,7 @@ Take your time and provide an unstructured response. Include: (1) a detailed exp
 
             const chatCompletionA = await openai.chat.completions.create({
                 model: FIX_MODEL_A,
-                temperature: 0.75,
+                temperature: 0.50,
                 messages: [{role: "user", content: promptA}],
             });
 
@@ -394,6 +408,8 @@ Rules:
 - If the fix modifies a file OTHER than the file that contains the violation (shown above), you MUST state this explicitly at the start of the "explanation": clearly name which file(s) were modified and note that they differ from the file where the violation was reported, and briefly say why the fix belongs there.
 - Do NOT return an empty edits array if your analysis described a change. If truly no change is needed, still return the single most-relevant file unchanged is NOT allowed — instead explain why in "explanation" and leave edits empty only if the code already fully satisfies the rule.
 - Preserve all unrelated lines, imports, comments, and formatting exactly.
+
+
 Return only JSON.`;
 
             const chatCompletionB = await openai.chat.completions.create({
