@@ -397,6 +397,7 @@ class RulePanel extends Component {
                         xmlFiles={this.props.xmlFiles}
                         key={i}
                         d={d}
+                        rule={this.ruleI}
                         snippetGroup={group}
                         exampleSnippet={exampleSnippet}
                         exampleFilePath={exampleFilePath}
@@ -512,6 +513,7 @@ class SnippetView extends Component {
             snippetExplanation: null,
             suggestionFileName: null,
             llmModifiedFileContent: null,
+            suggestedEdits: null,
             fixButtonClicked: false,
             originalFileContent: ''
         };
@@ -531,6 +533,105 @@ class SnippetView extends Component {
         sessionStorage.removeItem(key);
     }
 
+    /**
+     * Gather files (other than the violation file) that provide the context
+     * needed to fix a (possibly cross-file) rule. Ordered by signal strength:
+     *   1. Satisfying-example files  — files that already PASS this rule, i.e.
+     *      the correct pattern shown in real, compilable context (from the
+     *      rule's xPathQueryResult[].data.satisfiedResult).
+     *   2. Constraint-named classes  — classes named in the constraint XPath
+     *      (e.g. a central registry/servlet the fix must edit).
+     *   3. Scoped folder files       — other files under the rule's checked
+     *      folders, as a last resort.
+     * Returns [{ filePath, content, reason }], de-duped and capped.
+     */
+    gatherFixSiteFiles = (rule, violationFilePath) => {
+        const xmlFiles = this.props.xmlFiles || [];
+        if (!rule || xmlFiles.length === 0) return [];
+
+        const MAX_FILES = 4; // hard cap to protect the token budget
+        const normalizePath = (p) => (p || '').replace(/\\/g, '/');
+        const violationNorm = normalizePath(violationFilePath);
+
+        const picked = new Map(); // normalizedPath -> { filePath, content, reason }
+
+        const findByPath = (targetPath) => {
+            const norm = normalizePath(targetPath);
+            let match = xmlFiles.find((f) => normalizePath(f.filePath) === norm);
+            if (match) return match;
+            const base = norm.split('/').pop();
+            return xmlFiles.find((f) => normalizePath(f.filePath).endsWith(`/${base}`));
+        };
+
+        const addFile = (file, reason) => {
+            if (!file) return false;
+            if (picked.size >= MAX_FILES) return false;
+            const norm = normalizePath(file.filePath);
+            if (norm === violationNorm) return false;
+            if (picked.has(norm)) return false;
+            picked.set(norm, {
+                filePath: file.filePath,
+                content: Utilities.removeSrcmlAnnotations(file.xml),
+                reason,
+            });
+            return true;
+        };
+
+        // 1) Class names referenced by the constraint XPath (excluding <TEMP>).
+        //    For cross-file rules the constraint names the file where the fix
+        //    actually belongs (e.g. the central CrowdServlet registry), so this
+        //    is the HIGHEST-priority signal and must be gathered first — before
+        //    the cap can be consumed by lower-value example files.
+        const constraintXPath = Array.isArray(rule.constraintXPathQuery)
+            ? rule.constraintXPathQuery.join(' ')
+            : (rule.constraintXPathQuery || '');
+        const classNames = new Set();
+        const re = /text\(\)\s*=\s*"([A-Za-z_][A-Za-z0-9_]*)"/g;
+        let m;
+        while ((m = re.exec(constraintXPath)) !== null) {
+            const name = m[1];
+            if (name && name !== '<TEMP>') classNames.add(name);
+        }
+        classNames.forEach((name) => {
+            const wanted = `${name.toLowerCase()}.java`;
+            const match = xmlFiles.find((f) => normalizePath(f.filePath).split('/').pop().toLowerCase() === wanted);
+            addFile(match, `named in the rule constraint (${name}) - likely fix site`);
+        });
+
+        // 2) Satisfying-example files: files that already PASS this rule, shown as
+        //    the correct pattern in real context. Secondary to the fix site, and
+        //    limited so they cannot crowd out more important files.
+        const results = Array.isArray(rule.xPathQueryResult) ? rule.xPathQueryResult : [];
+        let exampleCount = 0;
+        const MAX_EXAMPLES = 2;
+        for (const entry of results) {
+            if (exampleCount >= MAX_EXAMPLES || picked.size >= MAX_FILES) break;
+            const data = entry && entry.data;
+            if (!data || !Array.isArray(data.satisfiedResult) || data.satisfiedResult.length === 0) continue;
+            if (normalizePath(entry.filePath) === violationNorm) continue;
+            if (addFile(findByPath(entry.filePath), 'satisfies this rule (correct example)')) exampleCount++;
+        }
+
+        // 3) Files under the rule's checked folders that are NOT in the violation
+        //    file's own folder. Last-resort scope fill, tightly capped.
+        const folders = Array.isArray(rule.checkForFilesFolders) ? rule.checkForFilesFolders : [];
+        const violationFolder = violationNorm.substring(0, violationNorm.lastIndexOf('/'));
+        const MAX_FOLDER_FILES = 2;
+        for (const folder of folders) {
+            if (picked.size >= MAX_FILES) break;
+            const f = normalizePath(folder);
+            if (!f || violationFolder.indexOf(f) !== -1) continue; // skip the violation's own folder
+            let count = 0;
+            for (const file of xmlFiles) {
+                if (count >= MAX_FOLDER_FILES || picked.size >= MAX_FILES) break;
+                if (normalizePath(file.filePath).indexOf(f) !== -1) {
+                    if (addFile(file, 'in the rule scope')) count++;
+                }
+            }
+        }
+
+        return Array.from(picked.values());
+    }
 
     handleSuggestion = async (
         rule,
@@ -561,6 +662,9 @@ class SnippetView extends Component {
             }
         }
 
+        // Resolve candidate fix-site files (cross-file rules) from rule metadata.
+        const fixSiteFiles = this.gatherFixSiteFiles(this.props.rule, violationFilePath);
+
         this.setState({ fixButtonClicked: true, originalFileContent: violationFileContent });
 
         // prevent multiple calls to suggestFix
@@ -573,6 +677,7 @@ class SnippetView extends Component {
                 exampleFilePath,
                 violationFilePath,
                 violationFileContent,
+                fixSiteFiles,
                 this.setState.bind(this),
             );
 
@@ -693,15 +798,11 @@ class SnippetView extends Component {
     };
 
     renderDiff = () => {
-        const originalCode = this.state.originalFileContent;
-        const modifiedCode = this.state.suggestedSnippet || '';
-        const diff = this.generateDiff(originalCode, modifiedCode);
-
         const highlightCode = (code) => {
             return Prism.highlight(code, Prism.languages.java, 'java');
         };
 
-        return (
+        const renderDiffLines = (diff) => (
             <div className="diff-container" style={{ fontFamily: 'monospace', whiteSpace: 'pre', border: '1px solid #d6d6d6', borderRadius: '7px', padding: '1px' }}>
                 {diff.map((line, index) => (
                     <div
@@ -718,6 +819,31 @@ class SnippetView extends Component {
                 ))}
             </div>
         );
+
+        // Multi-file fix: render one diff block per changed file.
+        const edits = this.state.suggestedEdits;
+        if (Array.isArray(edits) && edits.length > 0) {
+            const fileName = (fp) => (fp || '').replace(/\\/g, '/').split('/').pop();
+            return (
+                <div>
+                    {edits.map((edit, i) => {
+                        const diff = this.generateDiff(edit.originalFileContent || '', edit.modifiedFileContent || '');
+                        return (
+                            <div key={i} style={{ marginBottom: '8px' }}>
+                                <p style={{ fontWeight: 'bold', margin: '4px 0' }}>{fileName(edit.filePath)}</p>
+                                {renderDiffLines(diff)}
+                            </div>
+                        );
+                    })}
+                </div>
+            );
+        }
+
+        // Legacy single-file fix.
+        const originalCode = this.state.originalFileContent;
+        const modifiedCode = this.state.suggestedSnippet || '';
+        const diff = this.generateDiff(originalCode, modifiedCode);
+        return renderDiffLines(diff);
     };
 
 

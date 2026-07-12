@@ -61,6 +61,7 @@ class Utilities {
                         fileToChange: data.llmModifiedFileContent.data.fileToChange,
                         modifiedFileContent: data.llmModifiedFileContent.data.modifiedFileContent,
                         originalFileContent: data.originalFileContent || data.llmModifiedFileContent.data.originalFileContent || '',
+                        edits: data.llmModifiedFileContent.data.edits || undefined,
                     }
 
                     break;
