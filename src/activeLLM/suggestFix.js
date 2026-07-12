@@ -1,5 +1,26 @@
 import OpenAI from "openai";
 
+// Models used for the two-step fix pipeline. Step A produces a prose analysis,
+// step B structures it into JSON edits. Change these in one place; token usage,
+// cost, and the logged `model` all derive from them (nothing is hardcoded).
+const FIX_MODEL_A = "gpt-4o";
+const FIX_MODEL_B = FIX_MODEL_A;
+
+// Per-model list prices in USD per 1M tokens { input, output }. Used to estimate
+// cost from reported token usage. Unknown models fall back to gpt-4o pricing.
+const MODEL_PRICING = {
+    "gpt-4o": { input: 2.5, output: 10 },
+    "gpt-5.2": { input: 1.25, output: 10 },
+};
+
+// Estimate USD cost of a single call from its usage object and model name.
+function estimateCallCost(model, usage) {
+    const price = MODEL_PRICING[model] || MODEL_PRICING["gpt-4o"];
+    const inTok = usage?.prompt_tokens || 0;
+    const outTok = usage?.completion_tokens || 0;
+    return (inTok / 1e6) * price.input + (outTok / 1e6) * price.output;
+}
+
 /**
  * Validates whether the returned content is likely a full file or just a partial snippet.
  * Returns an object with validation results.
@@ -323,11 +344,12 @@ Take your time and provide an unstructured response. Include: (1) a detailed exp
             });
 
             const chatCompletionA = await openai.chat.completions.create({
-                model: "gpt-4o",
+                model: FIX_MODEL_A,
                 temperature: 0.75,
                 messages: [{role: "user", content: promptA}],
             });
 
+            const usageA = chatCompletionA.usage || {};
             const responseA = chatCompletionA.choices[0].message.content;
 
             console.log("ReceivedResponseA from chatGPT:");
@@ -375,13 +397,14 @@ Rules:
 Return only JSON.`;
 
             const chatCompletionB = await openai.chat.completions.create({
-                model: "gpt-4o",
+                model: FIX_MODEL_B,
                 temperature: 0.2,
                 //max_tokens: 8000,
                 response_format: {type: "json_object"},
                 messages: [{role: "user", content: promptB}],
             });
 
+            const usageB = chatCompletionB.usage || {};
             const choiceB = chatCompletionB.choices[0];
             const suggestedSnippet = choiceB.message.content;
             if (choiceB.finish_reason === "length") {
@@ -510,8 +533,55 @@ Return only JSON.`;
                 },
             };
 
+            // Aggregate token usage across both LLM calls (step A prose + step B
+            // structured JSON). Cost is estimated per call using each call's own
+            // model pricing, so the totals stay correct even when steps A and B
+            // use different models.
+            const promptTokens = (usageA.prompt_tokens || 0) + (usageB.prompt_tokens || 0);
+            const completionTokens = (usageA.completion_tokens || 0) + (usageB.completion_tokens || 0);
+            const totalTokens = (usageA.total_tokens || 0) + (usageB.total_tokens || 0);
+            const costA = estimateCallCost(FIX_MODEL_A, usageA);
+            const costB = estimateCallCost(FIX_MODEL_B, usageB);
+            const estimatedCostUsd = costA + costB;
+            // "gpt-4o+gpt-5.2" style label when the two steps differ.
+            const modelLabel = FIX_MODEL_A === FIX_MODEL_B ? FIX_MODEL_A : `${FIX_MODEL_A}+${FIX_MODEL_B}`;
+            const tokenUsage = {
+                model: modelLabel,
+                promptTokens,
+                completionTokens,
+                totalTokens,
+                estimatedCostUsd: Number(estimatedCostUsd.toFixed(6)),
+                calls: [
+                    {step: "A", model: FIX_MODEL_A, estimatedCostUsd: Number(costA.toFixed(6)), ...usageA},
+                    {step: "B", model: FIX_MODEL_B, estimatedCostUsd: Number(costB.toFixed(6)), ...usageB},
+                ],
+            };
+
+            // Full log record for the DesignFix agentic-comparison dataset. Written
+            // to disk by the extension when the user clicks "Accept Fix".
+            llmModifiedFileContent.data.log = {
+                createdAt: new Date().toISOString(),
+                model: modelLabel,
+                violationFilePath,
+                exampleFilePath,
+                inspectedFiles: additionalFiles.map((f) => ({
+                    filePath: f.filePath,
+                    reason: f.reason || "",
+                })),
+                editedFiles: edits.map((e) => ({
+                    filePath: e.filePath,
+                    originalFileContent: e.originalFileContent,
+                    modifiedFileContent: e.modifiedFileContent,
+                })),
+                explanation,
+                tokenUsage,
+                prompts: {A: promptA, B: promptB},
+                responses: {A: responseA, B: suggestedSnippet},
+            };
+
             // set the modified content state, will be sent plugin
             setState({llmModifiedFileContent: llmModifiedFileContent});
+            setState({fixTokenUsage: tokenUsage});
 
             success = true;
             return llmModifiedFileContent;

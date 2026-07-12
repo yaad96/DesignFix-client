@@ -1040,6 +1040,11 @@ class SnippetView extends Component {
                                             data: {
                                                 ...this.state.llmModifiedFileContent.data,
                                                 originalFileContent: this.state.originalFileContent,
+                                                log: this.state.llmModifiedFileContent.data.log ? {
+                                                    ...this.state.llmModifiedFileContent.data.log,
+                                                    ruleId: (this.props.rule && this.props.rule.index !== undefined) ? this.props.rule.index : undefined,
+                                                    ruleTitle: (this.props.rule && this.props.rule.title) ? this.props.rule.title : '',
+                                                } : undefined,
                                             }
                                         };
                                         Utilities.sendToServer(

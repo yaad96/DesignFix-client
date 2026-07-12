@@ -62,6 +62,7 @@ class Utilities {
                         modifiedFileContent: data.llmModifiedFileContent.data.modifiedFileContent,
                         originalFileContent: data.originalFileContent || data.llmModifiedFileContent.data.originalFileContent || '',
                         edits: data.llmModifiedFileContent.data.edits || undefined,
+                        log: data.llmModifiedFileContent.data.log || undefined,
                     }
 
                     break;
