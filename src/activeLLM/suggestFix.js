@@ -375,9 +375,9 @@ Rules:
 Return only JSON.`;
 
             const chatCompletionB = await openai.chat.completions.create({
-                model: "gpt-5.2",
+                model: "gpt-4o",
                 temperature: 0.2,
-                max_tokens: 8000,
+                //max_tokens: 8000,
                 response_format: {type: "json_object"},
                 messages: [{role: "user", content: promptB}],
             });

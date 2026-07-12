@@ -36,8 +36,8 @@ class RuleTable extends Component {
                     ))
                     : null}
                 <div>
-                    {this.props.indicesOfRulesToDisplay.map((d, i) =>
-                        (<div key={i} style={{paddingBottom: "5px"}}>
+                    {this.props.indicesOfRulesToDisplay.map((d) =>
+                        (<div key={`${this.props.navSeq}-${d}`} style={{paddingBottom: "5px"}}>
                             <RulePanel ruleIndex={d}/>
                         </div>)
                     )}
@@ -59,7 +59,11 @@ function mapStateToProps(state) {
     let props = {
         newRule: state.rulePadState.isEditMode,
         indicesOfRulesToDisplay: state.ruleTable.map(d => d.index),
-        hash0: state.currentHash[0]
+        hash0: state.currentHash[0],
+        // Increments on every navigation; used as part of the panel key so each
+        // visit to a view mounts fresh panels (no residual fix diffs / open
+        // state), while interactions within a view stay stable.
+        navSeq: state.hashManager.activeHashIndex
     };
 
 

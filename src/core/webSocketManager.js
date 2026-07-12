@@ -35,7 +35,9 @@ class WebSocketManager extends Component {
 
         this.props.onUpdateWS(ws);
 
-        ws.onopen = function () {};
+        // Start every (re)connection from a clean slate so rules are never
+        // checked against XML left over from a previous connection.
+        ws.onopen = function () { xmlData = []; };
 
         if (!window.WebSocket) {
             alert("FATAL: WebSocket not natively supported. This demo will not work!");
@@ -54,6 +56,9 @@ class WebSocketManager extends Component {
 
 
                 case webSocketReceiveMessage.enter_chat_msg:
+                    // First message of a fresh send cycle: reset the accumulator
+                    // so the incoming full XML stream fully replaces any prior set.
+                    xmlData = [];
                     this.props.onLoadingGif(true);
                     break;
 
@@ -87,6 +92,12 @@ class WebSocketManager extends Component {
 
                 case webSocketReceiveMessage.verify_rules_msg:
                     // data: ""
+                    // Guard against checking rules before the full XML set has
+                    // arrived, which would falsely flag cross-file rules.
+                    if (xmlData.length === 0) {
+                        console.warn("verify_rules received with empty xmlData; skipping to avoid false violations.");
+                        break;
+                    }
                     ruleTable = checkRulesForAll(xmlData, ruleTable);
                     this.props.onUpdateRuleTable(ruleTable);
                     break;
